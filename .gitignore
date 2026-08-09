@@ -1,0 +1,46 @@
+# Python caches and local environments
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+env/
+.env
+
+# Editors and OS files
+.vscode/
+.idea/
+.DS_Store
+*.swp
+*.swo
+
+# ROS 2 / colcon generated files
+ros2_ws/build/
+ros2_ws/install/
+ros2_ws/log/
+
+# External ROS source checkouts; restore them with the setup scripts.
+ros2_ws/src/OrbbecSDK_ROS2/
+ros2_ws/src/image_common/
+ros2_ws/src/image_pipeline/
+
+# Calibration outputs, captured data, logs and trained checkpoints
+runs/*
+*.npz
+*.bag
+*.db3
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.log
+
+# Temporary and generated files
+*.tmp
+*.bak
+*~

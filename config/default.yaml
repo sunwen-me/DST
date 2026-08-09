@@ -1,0 +1,131 @@
+# DST-Calib 复现 — 默认配置 (Mid-360 + Gemini 335)
+# 超参依据: arXiv 2601.01188 第 IV 节实现细节；未给出者取工程合理值并注明。
+
+sensors:
+  lidar:
+    topic: "/livox/lidar"            # livox_ros_driver2 PointCloud2 (xfer_format=0)
+    lidar_ip: "192.168.1.12"
+    host_ip: "192.168.1.5"           # 主机有线网卡需在此网段
+    min_range: 0.1                   # Mid-360 最小探测距离 (m)
+    max_range: 40.0
+  camera:
+    color_topic: "/camera/color/image_raw"
+    depth_topic: "/camera/depth/image_raw"   # depth_registration:=true 后已对齐彩色
+    info_topic: "/camera/color/camera_info"
+    depth_min: 0.25                  # Gemini 335 可靠深度范围 (m)
+    depth_max: 6.0
+    depth_unit: "auto"               # auto | mm | m
+
+capture:
+  num_frames: 12
+  accumulate_sec: 3.0                # Mid-360 非重复扫描, 累积提密度
+  interval_sec: 1.0
+
+# 虚拟相机 (论文: 投影尺寸 256x512, 焦距 600)
+virtual_camera:
+  height: 256
+  width: 512
+  focal: 600.0
+
+difference_map:
+  e_tar: 0.1                         # 目标平移误差阈值 (m); 论文未给数值, 取 0.1
+                                     # (与论文 a=0.1/1 的 0.1m 良好标准一致)
+
+dar:
+  max_anchors: 400                   # DP 前分位数抽样上限 (O(n^2) DP)
+  min_anchors: 8
+
+self_supervised:
+  # 粗搜索 (工程补充: Mid-360 为 360° 视场, 论文假设有粗初值)
+  coarse:
+    yaw_grid: 12                     # 12 x 30°
+    pitch_grid_deg: [-20, 0, 20]
+    voxel: 0.4
+    iters_per_start: 40
+    lr: 0.03
+    max_points: 4000
+    t_bound: 0.5                     # 平移软约束半径 (m): 相机与雷达共装支架, 粗搜索
+                                     # 平移不应远离 0; 防止单向截断 Chamfer 的
+                                     # "整体平移塌缩到相机点云体积内" 退化最优
+                                     # (合成端到端测试曾复现 yaw=180° 候选平移 3.5m 胜出)
+    t_penalty: 10.0                  # 超出 t_bound 部分的二次惩罚权重
+    fov_margin_deg: 12.0             # 粗搜索视锥裁剪余量 (候选朝向误差大, 取宽)
+    score_trunc: 0.5                 # 终值评分的对称截断 Chamfer 截断距离 (m):
+                                     # 单向评分分辨不了"平面贴平面"的错误朝向,
+                                     # 对称+紧截断使正确朝向显著胜出
+  # 由粗到细自监督优化 (SimplePoseEstimator + Adam, >=30 批, 论文 IV)
+  stages:
+    - {voxel: 0.30, iters: 150, lr: 0.010, trunc: 2.0, max_points: 8000}
+    - {voxel: 0.12, iters: 200, lr: 0.004, trunc: 0.8, max_points: 15000}
+    - {voxel: 0.05, iters: 250, lr: 0.0015, trunc: 0.3, max_points: 25000}
+  per_frame_finetune_iters: 40       # 末段每帧独立微调 → 多帧候选 T_i
+  per_frame_lr: 0.0008
+  # t_ini_weight: 1.0                # 式(19) L_t_ini=w·||t−t_ini||_2 权重 (可选键):
+  #                                  # 未设置时 selfsup 关闭该项 (粗搜索初值平移不可靠),
+  #                                  # both 模式由 calibrate 按契约 A3 (式19 全三项)
+  #                                  # 自动以 1.0 启用; 显式设置 (含 0) 时以此值为准
+  fov_margin_deg: 8.0                # LiDAR 点裁剪到相机视场外扩余量
+  batch_frames: 2                    # 每次迭代随机采样帧数
+  chamfer_alpha: 0.5                 # 论文: α=β=0.5
+  chamfer_beta: 0.5
+  seed: 0
+
+multiframe:
+  selection_ratio: 0.3               # 式(22) x; 论文未给数值, 取 0.3
+  weighting: "score"                 # score | uniform (式23)
+
+loss:
+  a: 0.1                             # 式(18) 尺度参数 a=0.1/1
+
+inference:                           # 离线标定模式选择 (附录 A3, calibrate.py)
+  mode: auto                         # auto | selfsup | fast | both;
+                                     # auto: eva_ckpt 断点存在→both, 否则 selfsup;
+                                     # CLI --mode 优先于此项
+  eva_ckpt: runs/train_eva/best.pt   # 评估模块断点路径 (相对 DST 根;
+                                     # train.py 输出, CLI --eva_ckpt 优先)
+  eva_iters: 3                       # eva_refine 每帧迭代精化轮数 (RegNet 式,
+                                     # ‖ξ‖ 足够小时提前停, 见契约 A1)
+  both_eva_iters: 3                  # both 中 PE 后的最终 SB 精化轮数; PE 候选已在
+                                     # 小邻域内, 3 轮可降低欠训练断点的残余偏差
+
+online:                              # ROS2 在线动态标定 (scripts/online_calib_node.py)
+  mode: fast                         # fast 推荐持续运行; both/selfsup 可用但更新较慢
+  window_size: 12                    # 滑窗帧数; 窗口内假设外参不变
+  window_stride: 4                   # 每新增多少个同步帧提交一次最新窗口
+  sync_slop_sec: 0.05                # LiDAR PointCloud2 与 Gemini 深度最大近似同步差
+  sync_queue_size: 40
+  min_lidar_points: 1000             # 低质量同步帧不进入窗口
+  max_lidar_points: 120000           # 单帧确定性抽稀上限, 控制 IPC 与显存
+  min_depth_valid_ratio: 0.05
+  # 留空时使用 DST_CALIB_PYTHON；未设置时回退到当前 Python。
+  worker_python: ""
+  worker_timeout_sec: 900
+  publish_rate_hz: 10.0
+  camera_frame: camera_color_optical_frame
+  lidar_frame: livox_frame
+  extrinsic_topic: /dst_calib/extrinsic
+  status_topic: /dst_calib/status
+  max_final_cd: 0.15                 # 候选质量门槛; 非有限或更大时拒绝发布
+  max_rotation_jump_deg: 5.0         # 小于阈值: 正常跟踪并平滑
+  max_translation_jump_m: 0.30
+  smoothing_alpha: 0.35              # 新候选权重
+  reanchor_confirmations: 2          # 大跳变连续一致后允许重锚定
+  confirmation_rotation_deg: 1.0
+  confirmation_translation_m: 0.05
+
+train:                               # 评估模块训练 (可选, 论文 III-D-1)
+  lr: 5.0e-4
+  weight_decay: 1.0e-4
+  epochs: 200
+  batch_size: 8
+  scheduler: onecycle
+  arch: sb                           # sb | db
+  block_n: 5                         # 块处理 n×n=5×5
+
+augmentation:                        # 论文 IV: [±5°, ±0.5m], 轴权重 [0.6,0.2,0.2]
+  rot_range_deg: 5.0
+  trans_range_m: 0.5
+  axis_weights: [0.6, 0.2, 0.2]
+
+output:
+  runs_dir: "runs"

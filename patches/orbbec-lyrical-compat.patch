@@ -1,0 +1,45 @@
+diff --git a/orbbec_camera/CMakeLists.txt b/orbbec_camera/CMakeLists.txt
+--- a/orbbec_camera/CMakeLists.txt
++++ b/orbbec_camera/CMakeLists.txt
+@@ -15 +15 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+-    add_compile_options(-Wall -Wextra -Werror -Wno-pedantic -Wno-array-bounds)
++    add_compile_options(-Wall -Wextra -Werror -Wno-pedantic -Wno-array-bounds -Wno-error=cpp -Wno-error=deprecated-declarations)
+@@ -50,0 +51,3 @@ endforeach()
++# 兼容补丁: lyrical 中 ament_target_dependencies 不再随 ament_cmake 自动引入
++find_package(ament_cmake_target_dependencies REQUIRED)
++include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/ament_target_dependencies_compat.cmake)
+@@ -199 +202,2 @@ add_orbbec_executable(service_benchmark_node scripts/service_benchmark_node.cpp)
+-add_orbbec_executable(image_sync_example_node examples/multi_camera_time_sync/image_sync_example_node.cpp)
++# lyrical 兼容: 示例用了已移除的 rmw_qos_profile_t 订阅 API, 标定不需要, 跳过
++# add_orbbec_executable(image_sync_example_node examples/multi_camera_time_sync/image_sync_example_node.cpp)
+@@ -260 +264 @@ endif()
+-install(TARGETS list_devices_node list_depth_work_mode_node list_camera_profile_mode_node firmware_update_tool topic_statistics_node  service_benchmark_node ob_benchmark_node 435le_example_node ip_config_tool set_device_ip image_sync_example_node DESTINATION lib/${PROJECT_NAME}/
++install(TARGETS list_devices_node list_depth_work_mode_node list_camera_profile_mode_node firmware_update_tool topic_statistics_node  service_benchmark_node ob_benchmark_node 435le_example_node ip_config_tool set_device_ip DESTINATION lib/${PROJECT_NAME}/
+diff --git a/orbbec_camera/src/d2c_viewer.cpp b/orbbec_camera/src/d2c_viewer.cpp
+--- a/orbbec_camera/src/d2c_viewer.cpp
++++ b/orbbec_camera/src/d2c_viewer.cpp
+@@ -31,0 +32 @@ D2CViewer::D2CViewer(rclcpp::Node* const node, rmw_qos_profile_t rgb_qos,
++  // lyrical 兼容: 新版 message_filters::Subscriber 只接受 rclcpp::QoS
+@@ -33 +34,2 @@ D2CViewer::D2CViewer(rclcpp::Node* const node, rmw_qos_profile_t rgb_qos,
+-      node_, "color/image_raw", rgb_qos);
++      node_, "color/image_raw",
++      rclcpp::QoS(rclcpp::QoSInitialization::from_rmw(rgb_qos), rgb_qos));
+@@ -35 +37,2 @@ D2CViewer::D2CViewer(rclcpp::Node* const node, rmw_qos_profile_t rgb_qos,
+-      node_, "depth/image_raw", depth_qos);
++      node_, "depth/image_raw",
++      rclcpp::QoS(rclcpp::QoSInitialization::from_rmw(depth_qos), depth_qos));
+diff --git a/orbbec_camera/src/ob_camera_node.cpp b/orbbec_camera/src/ob_camera_node.cpp
+--- a/orbbec_camera/src/ob_camera_node.cpp
++++ b/orbbec_camera/src/ob_camera_node.cpp
+@@ -5315,0 +5316 @@ void OBCameraNode::setupCameraInfo() {
++    // lyrical 兼容: 新版 CameraInfoManager 构造需要显式传入节点接口
+@@ -5317 +5318,2 @@ void OBCameraNode::setupCameraInfo() {
+-        node_, color_camera_name, color_info_url_);
++        node_->get_node_base_interface(), node_->get_node_services_interface(),
++        node_->get_node_logging_interface(), color_camera_name, color_info_url_);
+@@ -5320,0 +5323 @@ void OBCameraNode::setupCameraInfo() {
++    // lyrical 兼容: 同上
+@@ -5322 +5325,2 @@ void OBCameraNode::setupCameraInfo() {
+-        node_, ir_camera_name, ir_info_url_);
++        node_->get_node_base_interface(), node_->get_node_services_interface(),
++        node_->get_node_logging_interface(), ir_camera_name, ir_info_url_);
